@@ -11,11 +11,15 @@ The goals are as follows:
 ## Build Notes
 1. This will only compile on a Linux-based system, due to a dependency on libcontainer.
 2. When you attempt to compile the Golang files, it will fail on a dependency for k8s.io/kubernetes/pkg/api. 
+3. 
    This is documented here: https://github.com/kubernetes/kubernetes/issues/16361.
+
    The solution is to do the following:
+
    ```
    	cd $GOPATH/src/github.com/ugorji/go/codec/
 	git checkout 8a2a3a8c488c3ebd98f422a965260278267a0551
    ```
+   
    Which will pin that package to a version that works.  Hopefully, it will be fixed and this will be unnecessary.
 
