@@ -11,7 +11,7 @@ The goals are as follows:
 ## Build Notes
 1. This will only compile on a Linux-based system, due to a dependency on libcontainer.
 2. When you attempt to compile the Golang files, it will fail on a dependency for k8s.io/kubernetes/pkg/api. 
-3. 
+
    This is documented here: https://github.com/kubernetes/kubernetes/issues/16361.
 
    The solution is to do the following:
