@@ -1,9 +1,11 @@
 all: push
 
-# 0.0 shouldn't clobber any released builds
-TAG = 0.0
-PREFIX = gcr.io/google_containers/servicelb
+TAG = latest
+PREFIX = quay.io/pulsecode/kubernetes-haproxy
 HAPROXY_IMAGE = contrib-haproxy
+STATS_PEM = ssl/stats.pem
+SECRET_VOL_NAME = "haproxy-stats-secrets"
+SECRET = haproxy-stats-secrets.json
 
 server: service_loadbalancer.go
 	CGO_ENABLED=0 GOOS=linux godep go build -a -installsuffix cgo -ldflags '-w' -o service_loadbalancer ./service_loadbalancer.go ./loadbalancer_log.go
@@ -21,6 +23,9 @@ haproxy:
 	docker cp $(HAPROXY_IMAGE):/work/x86_64/haproxy-1.6-r0.apk .
 	docker rm -f $(HAPROXY_IMAGE)
 	mv haproxy-1.6-r0.apk haproxy.apk
+
+secret:
+	godep go run make_secret.go -pem $(STATS_PEM) -name $(SECRET_VOL_NAME) -username $(STATS_USERNAME) -password $(STATS_PASSWORD) > $(SECRET)
 
 clean:
 	rm -f service_loadbalancer haproxy.apk
