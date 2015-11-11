@@ -124,6 +124,15 @@ var (
 	startSyslog = flags.Bool("syslog", false, `if set, it will start a syslog server
 		that will forward haproxy logs to stdout.`)
 
+	statsSSLCert = flags.String("stats-ssl-cert", "", `if set, it will try to load the
+		certificate and use it for the stats page.`)
+
+	statsUsername = flags.String("stats-username", "", `if set, it will try to load the
+		username from this file.`)
+
+	statsPassword = flags.String("stats-password", "", `if set, it will try to load the
+		password from this file.`)
+
 	errorPage = flags.String("error-page", "", `if set, it will try to load the content
 		as a web page and use the content as error page. Is required that the URL returns
 		200 as a status code`)
@@ -184,13 +193,17 @@ func (s serviceByName) Less(i, j int) bool {
 // loadBalancerConfig represents loadbalancer specific configuration. Eventually
 // kubernetes will have an api for l7 loadbalancing.
 type loadBalancerConfig struct {
-	Name           string `json:"name" description:"Name of the load balancer, eg: haproxy."`
-	ReloadCmd      string `json:"reloadCmd" description:"command used to reload the load balancer."`
-	Config         string `json:"config" description:"path to loadbalancers configuration file."`
-	Template       string `json:"template" description:"template for the load balancer config."`
-	Algorithm      string `json:"algorithm" description:"loadbalancing algorithm."`
-	startSyslog    bool   `description:"indicates if the load balancer uses syslog."`
-	lbDefAlgorithm string `description:"custom default load balancer algorithm".`
+	Name                string `json:"name" description:"Name of the load balancer, eg: haproxy."`
+	ReloadCmd           string `json:"reloadCmd" description:"command used to reload the load balancer."`
+	Config              string `json:"config" description:"path to loadbalancers configuration file."`
+	Template            string `json:"template" description:"template for the load balancer config."`
+	Algorithm           string `json:"algorithm" description:"loadbalancing algorithm."`
+	startSyslog         bool   `description:"indicates if the load balancer uses syslog."`
+	useStatsSSLCert     bool   `description:"indicates if the load balancer uses an SSL certificate for the stats page."`
+	statsSSLCert        string `description:"location of SSL certificate to use for stats page.".`
+	statsUsername       string `description:"location of file with username to use for stats page.".`
+	statsPassword       string `description:"location of file with password to use for stats page.".`
+	lbDefAlgorithm      string `description:"custom default load balancer algorithm".`
 }
 
 type staticPageHandler struct {
@@ -273,6 +286,10 @@ func (cfg *loadBalancerConfig) write(services map[string][]service, dryRun bool)
 
 	conf := make(map[string]interface{})
 	conf["startSyslog"] = strconv.FormatBool(cfg.startSyslog)
+	conf["useStatsSSLCert"] = strconv.FormatBool(cfg.useStatsSSLCert)
+	conf["statsSSLCert"] = cfg.statsSSLCert
+	conf["statsUsername"] = cfg.statsUsername
+	conf["statsPassword"] = cfg.statsPassword
 	conf["services"] = services
 
 	// default load balancer algorithm is roundrobin
@@ -535,7 +552,7 @@ func newLoadBalancerController(cfg *loadBalancerConfig, kubeClient *unversioned.
 
 // parseCfg parses the given configuration file.
 // cmd line params take precedence over config directives.
-func parseCfg(configPath string, defLbAlgorithm string) *loadBalancerConfig {
+func parseCfg(configPath string, defLbAlgorithm string, stats map[string]string) *loadBalancerConfig {
 	jsonBlob, err := ioutil.ReadFile(configPath)
 	if err != nil {
 		glog.Fatalf("Could not parse lb config: %v", err)
@@ -544,6 +561,19 @@ func parseCfg(configPath string, defLbAlgorithm string) *loadBalancerConfig {
 	err = json.Unmarshal(jsonBlob, &cfg)
 	if err != nil {
 		glog.Fatalf("Unable to unmarshal json blob: %v", string(jsonBlob))
+	}
+
+	cfg.statsSSLCert = stats["ssl_cert"]
+	cfg.statsUsername = stats["username"]
+	cfg.statsPassword = stats["password"]
+	if cfg.statsSSLCert != "" {
+                cfg.useStatsSSLCert = true
+		_, err := ioutil.ReadFile(cfg.statsSSLCert)
+		if err != nil {
+			glog.Fatalf("Could not find SSL cert for stats: %v", err)
+		}
+        } else {
+                cfg.useStatsSSLCert = false
 	}
 
 	cfg.lbDefAlgorithm = defLbAlgorithm
@@ -594,13 +624,35 @@ func dryRun(lbc *loadBalancerController) {
 func main() {
 	clientConfig := kubectl_util.DefaultClientConfig(flags)
 	flags.Parse(os.Args)
-	cfg := parseCfg(*config, *lbDefAlgorithm)
+	var username []byte
+	var password []byte
+	var err error
+	if *statsUsername != "" {
+		username, err = ioutil.ReadFile(*statsUsername)
+		if err != nil {
+			glog.Fatalf("Could not parse stats-username config: %v", err)
+		}
+	} else {
+		username = []byte("user")
+	}
+	if *statsPassword != "" {
+		password, err = ioutil.ReadFile(*statsPassword)
+		if err != nil {
+			glog.Fatalf("Could not parse stats-password config: %v", err)
+		}
+	} else {
+		password = []byte("password")
+	}
+	stats := make(map[string]string)
+	stats["ssl_cert"] = *statsSSLCert
+	stats["username"] = string(username)
+	stats["password"] = string(password)
+	cfg := parseCfg(*config, *lbDefAlgorithm, stats)
 	if len(*tcpServices) == 0 {
 		glog.Infof("All tcp/https services will be ignored.")
 	}
 
 	var kubeClient *unversioned.Client
-	var err error
 
 	defErrorPage := newStaticPageHandler(*errorPage, defaultErrorPage)
 	if defErrorPage == nil {
