@@ -50,6 +50,7 @@ const (
 	lbApiPort                = 8081
 	lbAlgorithmKey           = "serviceloadbalancer/lb.algorithm"
 	lbHostKey                = "serviceloadbalancer/lb.host"
+	lbSSLCert                = "serviceloadbalancer/lb.ssl_cert"
 	lbCookieStickySessionKey = "serviceloadbalancer/lb.cookie-sticky-session"
 	defaultErrorPage         = "file:///etc/haproxy/errors/404.http"
 )
@@ -124,6 +125,9 @@ var (
 	startSyslog = flags.Bool("syslog", false, `if set, it will start a syslog server
 		that will forward haproxy logs to stdout.`)
 
+	defaultSSLCert = flags.String("default-ssl-cert", "", `if set, it will try to load the
+		certificate and use it as the default.`)
+
 	statsSSLCert = flags.String("stats-ssl-cert", "", `if set, it will try to load the
 		certificate and use it for the stats page.`)
 
@@ -160,6 +164,9 @@ type service struct {
 
 	// Algorithm
 	Algorithm string
+
+	// SSL certificate (optional)
+	SSLCert string
 
 	// If SessionAffinity is set and without CookieStickySession, requests are routed to
 	// a backend based on client ip. If both SessionAffinity and CookieStickSession are
@@ -199,6 +206,7 @@ type loadBalancerConfig struct {
 	Template            string `json:"template" description:"template for the load balancer config."`
 	Algorithm           string `json:"algorithm" description:"loadbalancing algorithm."`
 	startSyslog         bool   `description:"indicates if the load balancer uses syslog."`
+	defaultSSLCert      string `description:"location of SSL certificate to use a default.".`
 	useStatsSSLCert     bool   `description:"indicates if the load balancer uses an SSL certificate for the stats page."`
 	statsSSLCert        string `description:"location of SSL certificate to use for stats page.".`
 	statsUsername       string `description:"location of file with username to use for stats page.".`
@@ -221,6 +229,11 @@ func (s serviceAnnotations) getAlgorithm() (string, bool) {
 
 func (s serviceAnnotations) getHost() (string, bool) {
 	val, ok := s[lbHostKey]
+	return val, ok
+}
+
+func (s serviceAnnotations) getSSLCert() (string, bool) {
+	val, ok := s[lbSSLCert]
 	return val, ok
 }
 
@@ -286,11 +299,21 @@ func (cfg *loadBalancerConfig) write(services map[string][]service, dryRun bool)
 
 	conf := make(map[string]interface{})
 	conf["startSyslog"] = strconv.FormatBool(cfg.startSyslog)
+	conf["defaultSSLCert"] = cfg.defaultSSLCert
 	conf["useStatsSSLCert"] = strconv.FormatBool(cfg.useStatsSSLCert)
 	conf["statsSSLCert"] = cfg.statsSSLCert
 	conf["statsUsername"] = cfg.statsUsername
 	conf["statsPassword"] = cfg.statsPassword
 	conf["services"] = services
+	conf["ssl_certs"] = ""
+	if cfg.defaultSSLCert != "" {
+		conf["ssl_certs"] = conf["ssl_certs"].(string) + " crt " + cfg.defaultSSLCert
+	}
+	for _, svc := range services["http"] {
+		if svc.SSLCert != "" {
+			conf["ssl_certs"] = conf["ssl_certs"].(string) + " crt " + svc.SSLCert
+		}
+	}
 
 	// default load balancer algorithm is roundrobin
 	conf["defLbAlgorithm"] = lbDefAlgorithm
@@ -411,6 +434,10 @@ func (lbc *loadBalancerController) getServices() (httpSvc []service, tcpSvc []se
 
 			if val, ok := serviceAnnotations(s.ObjectMeta.Annotations).getHost(); ok {
 				newSvc.Host = val
+			}
+
+			if val, ok := serviceAnnotations(s.ObjectMeta.Annotations).getSSLCert(); ok {
+				newSvc.SSLCert = val
 			}
 
 			if val, ok := serviceAnnotations(s.ObjectMeta.Annotations).getAlgorithm(); ok {
@@ -552,7 +579,7 @@ func newLoadBalancerController(cfg *loadBalancerConfig, kubeClient *unversioned.
 
 // parseCfg parses the given configuration file.
 // cmd line params take precedence over config directives.
-func parseCfg(configPath string, defLbAlgorithm string, stats map[string]string) *loadBalancerConfig {
+func parseCfg(configPath string, defLbAlgorithm string, stats map[string]string, defaultSSLCert string) *loadBalancerConfig {
 	jsonBlob, err := ioutil.ReadFile(configPath)
 	if err != nil {
 		glog.Fatalf("Could not parse lb config: %v", err)
@@ -563,6 +590,7 @@ func parseCfg(configPath string, defLbAlgorithm string, stats map[string]string)
 		glog.Fatalf("Unable to unmarshal json blob: %v", string(jsonBlob))
 	}
 
+	cfg.defaultSSLCert = defaultSSLCert
 	cfg.statsSSLCert = stats["ssl_cert"]
 	cfg.statsUsername = stats["username"]
 	cfg.statsPassword = stats["password"]
@@ -647,7 +675,7 @@ func main() {
 	stats["ssl_cert"] = *statsSSLCert
 	stats["username"] = string(username)
 	stats["password"] = string(password)
-	cfg := parseCfg(*config, *lbDefAlgorithm, stats)
+	cfg := parseCfg(*config, *lbDefAlgorithm, stats, *defaultSSLCert)
 	if len(*tcpServices) == 0 {
 		glog.Infof("All tcp/https services will be ignored.")
 	}

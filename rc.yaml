@@ -19,9 +19,9 @@ spec:
       nodeSelector:
         role: loadbalancer
       volumes:
-      - name: haproxy-stats-secrets-vol
+      - name: haproxy-secrets-volume
         secret:
-          secretName: haproxy-stats-secrets
+          secretName: haproxy-secrets-volume
       containers:
       - image: quay.io/pulsecode/kubernetes-haproxy
         imagePullPolicy: Always
@@ -46,9 +46,10 @@ spec:
           hostPort: 1936
           protocol: TCP
         volumeMounts:
-        - mountPath: /etc/haproxy/certs.d/stats/
-          name: haproxy-stats-secrets-vol
+        - mountPath: /etc/haproxy/certs.d/
+          name: haproxy-secrets-volume
         args:
-        - --stats-ssl-cert=/etc/haproxy/certs.d/stats/stats.pem
-        - --stats-username=/etc/haproxy/certs.d/stats/username
-        - --stats-password=/etc/haproxy/certs.d/stats/password
+        - --stats-ssl-cert=/etc/haproxy/certs.d/stats.pem
+        - --stats-username=/etc/haproxy/certs.d/stats-username
+        - --stats-password=/etc/haproxy/certs.d/stats-password
+        - --default-ssl-cert=/etc/haproxy/certs.d/default.pem

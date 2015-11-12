@@ -23,6 +23,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"encoding/json"
 	"io/ioutil"
 	"log"
 
@@ -34,14 +35,34 @@ import (
 	_ "k8s.io/kubernetes/pkg/api/install"
 )
 
+type Certificate struct {
+	Path        string `json:"path"`
+	Destination string `json:"destination"`
+}
+
+type Service struct {
+	Name        string `json:"name"`
+	Certificate Certificate `json:"certificate"`
+}
+
+type Stats struct {
+	Certificate Certificate `json:"certificate"`
+	Username    string `json:"username"`
+	Password    string `json:"password"`
+}
+
+type Config struct {
+	VolName     string `json:"volName"`
+	Certificate Certificate `json:"certificate"`
+	Stats       Stats `json:"stats"`
+	Services    []Service `json:"services"`
+}
+
 // TODO:
 // Add a -o flag that writes to the specified destination file.
 // Teach the script to create crt and key if -crt and -key aren't specified.
 var (
-	pem = flag.String("pem", "", "path to certificate bundle.")
-	name = flag.String("name", "", "name of the secrets volume.")
-	username = flag.String("username", "", "username to use for stats.")
-	password = flag.String("password", "", "password to use for stats.")
+	config = flag.String("config", "secrets.json", "path to secrets configuration.")
 )
 
 func read(file string) []byte {
@@ -54,20 +75,38 @@ func read(file string) []byte {
 
 func main() {
 	flag.Parse()
-	if *pem == "" || *name == "" || *username == "" || *password == "" {
-		log.Fatalf("Need to specify -pem -name -username -password and -template")
+	if *config == "" {
+		log.Fatalf("Need to specify -config")
 	}
-	bundle := read(*pem)
+	jsonBlob := read(*config)
+	var cfg Config
+	var err = json.Unmarshal(jsonBlob, &cfg)
+	if err != nil {
+		log.Fatalf("Unable to unmarshal json blob: %v", string(jsonBlob))
+	}
+	data := map[string][]byte{}
+
+	if cfg.Stats.Username != "" && cfg.Stats.Password != "" {
+		data["stats-username"] = []byte(cfg.Stats.Username)
+		data["stats-password"] = []byte(cfg.Stats.Password)
+	}
+	if cfg.Stats.Certificate.Path != "" && cfg.Stats.Certificate.Destination != "" {
+		data[cfg.Stats.Certificate.Destination] = read(cfg.Stats.Certificate.Path)
+	}
+	if cfg.Certificate.Path != "" && cfg.Certificate.Destination != "" {
+		data[cfg.Certificate.Destination] = read(cfg.Certificate.Path)
+	}
+	for _, svc := range cfg.Services {
+		if svc.Certificate.Path != "" && svc.Certificate.Destination != "" {
+			data[svc.Certificate.Destination] = read(svc.Certificate.Path)
+		}
+	}
 
 	secret := &api.Secret{
 		ObjectMeta: api.ObjectMeta{
-			Name: *name,
+			Name: cfg.VolName,
 		},
-		Data: map[string][]byte{
-			"stats.pem": bundle,
-			"username": []byte(*username),
-			"password": []byte(*password),
-		},
+		Data: data, 
 	}
 	fmt.Printf(runtime.EncodeOrDie(latest.GroupOrDie("").Codec, secret))
 }

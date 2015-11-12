@@ -3,8 +3,7 @@ all: push
 TAG = latest
 PREFIX = quay.io/pulsecode/kubernetes-haproxy
 HAPROXY_IMAGE = contrib-haproxy
-STATS_PEM = ssl/stats.pem
-SECRET_VOL_NAME = "haproxy-stats-secrets"
+SECRET_CONFIG = "secrets.json"
 SECRET = haproxy-stats-secrets.json
 
 server: service_loadbalancer.go
@@ -25,7 +24,7 @@ haproxy:
 	mv haproxy-1.6-r0.apk haproxy.apk
 
 secret:
-	godep go run make_secret.go -pem $(STATS_PEM) -name $(SECRET_VOL_NAME) -username $(STATS_USERNAME) -password $(STATS_PASSWORD) > $(SECRET)
+	godep go run make_secret.go -config $(SECRET_CONFIG) > $(SECRET)
 
 clean:
 	rm -f service_loadbalancer haproxy.apk
